@@ -17,7 +17,7 @@ struct RegisterSheet: View {
     @State private var registration: PinRegistration?
 
     private var canAutoRegister: Bool {
-        psn.isSignedIn && (entry.psn != nil || !entry.isPS5)
+        psn.isSignedIn && (entry.psn?.remotePlayEnabled == true || (entry.psn == nil && !entry.isPS5))
     }
 
     var body: some View {
@@ -71,7 +71,11 @@ struct RegisterSheet: View {
                 } header: {
                     Text("With PIN")
                 } footer: {
-                    Text("On the console open Settings › System › Remote Play › Link Device (PS5) or Settings › Remote Play Connection Settings › Add Device (PS4).")
+                    if entry.discovered == nil {
+                        Text("PIN registration only works when your iPhone and the console are on the same Wi-Fi. Use automatic registration above to set up from anywhere.")
+                    } else {
+                        Text("On the console open Settings › System › Remote Play › Link Device (PS5) or Settings › Remote Play Connection Settings › Add Device (PS4).")
+                    }
                 }
 
                 if let error = error {

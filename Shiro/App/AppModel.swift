@@ -16,7 +16,8 @@ final class AppModel: ObservableObject {
         let route: ConnectRoute
         if !preferInternet, let address = entry.discovered?.address ?? console.address {
             route = .local(address: address)
-        } else if let duid = entry.psn?.duid ?? console.psnDuid, PSNAuth.shared.isSignedIn {
+        } else if PSNAuth.shared.isSignedIn,
+                  let duid = entry.psn?.connectDuid ?? console.psnDuid.map({ console.isPS5 ? $0 : PSNDeviceList.ps4ConnectDuid }) {
             route = .psn(duid: duid)
         } else if let address = console.address {
             route = .local(address: address)
@@ -36,10 +37,15 @@ final class AppModel: ObservableObject {
         }
         let ps5 = entry.isPS5
         let duid: String
-        if let d = entry.psn?.duid {
-            duid = d
+        if let p = entry.psn {
+            guard p.remotePlayEnabled else {
+                alert = AppAlert(title: "Remote Play is off",
+                                 message: "Turn on Remote Play on \(p.name): Settings › System › Remote Play › Enable Remote Play. Then pull down to refresh.")
+                return
+            }
+            duid = p.connectDuid
         } else if !ps5 {
-            duid = Data(repeating: 0x41, count: 32).hexString
+            duid = PSNDeviceList.ps4ConnectDuid
         } else {
             alert = AppAlert(title: "Console not linked",
                              message: "This PS5 isn't linked to your PSN account for Remote Play. On the console enable Settings › System › Remote Play, and make sure you're signed in with the same account — or register with a PIN instead.")

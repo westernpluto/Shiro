@@ -17,6 +17,16 @@ struct ConsolesView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     if !psn.isSignedIn {
                         PSNBanner { showPSNLogin = true }
+                    } else if let error = store.lastPSNError {
+                        PSNErrorBanner(message: error) {
+                            Task { await store.refreshPSNDevices() }
+                        }
+                    }
+                    if store.refreshingPSN && store.psnDevices.isEmpty {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("Loading consoles from your PSN account…").foregroundStyle(.secondary)
+                        }
                     }
                     let entries = store.entries
                     if entries.isEmpty {
@@ -115,7 +125,7 @@ struct ConsoleCard: View {
                 Image(systemName: entry.isPS5 ? "playstation.logo" : "gamecontroller.fill")
                     .font(.title2)
                 Spacer()
-                StatusPill(state: entry.state, registered: entry.isRegistered, remote: entry.isAvailableRemotely)
+                StatusPill(entry: entry)
             }
             Spacer(minLength: 0)
             Text(entry.name)
@@ -148,17 +158,18 @@ struct ConsoleCard: View {
 }
 
 struct StatusPill: View {
-    let state: DiscoveredConsole.State
-    let registered: Bool
-    let remote: Bool
+    let entry: ConsoleEntry
 
     var body: some View {
         let (text, color): (String, Color) = {
-            if !registered { return ("Not registered", .orange) }
-            switch state {
+            if let p = entry.psn, !p.remotePlayEnabled { return ("Remote Play off", .orange) }
+            if !entry.isRegistered {
+                return entry.isLocal ? ("Tap to set up", .orange) : ("On your account", .blue)
+            }
+            switch entry.state {
             case .ready: return ("Ready", .green)
             case .standby: return ("Rest mode", .yellow)
-            case .unknown: return remote ? ("Internet", .blue) : ("Offline", .gray)
+            case .unknown: return entry.isAvailableRemotely ? ("Internet", .blue) : ("Offline", .gray)
             }
         }()
         return Text(text)
@@ -167,6 +178,26 @@ struct StatusPill: View {
             .padding(.vertical, 4)
             .background(color.opacity(0.25), in: Capsule())
             .foregroundStyle(color)
+    }
+}
+
+struct PSNErrorBanner: View {
+    let message: String
+    let retry: () -> Void
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.title2)
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Couldn't load consoles from PSN").font(.headline)
+                Text(message).font(.footnote).foregroundStyle(.secondary).lineLimit(4)
+            }
+            Spacer()
+            Button("Retry", action: retry).buttonStyle(.bordered)
+        }
+        .padding()
+        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 
