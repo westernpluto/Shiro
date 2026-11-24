@@ -10,7 +10,7 @@ final class ShiroLog {
     private let logger = Logger(subsystem: "io.github.westernpluto.shiro", category: "chiaki")
     private let lock = NSLock()
     private var lines: [String] = []
-    private let maxLines = 4000
+    private let maxLines = 8000
     private let formatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss.SSS"
@@ -39,7 +39,40 @@ final class ShiroLog {
     func warn(_ message: String) { append(level: CHIAKI_LOG_WARNING, message) }
     func error(_ message: String) { append(level: CHIAKI_LOG_ERROR, message) }
 
+    // Discovery sweeps send hundreds of probes per round; failed probes to
+    // addresses with nothing behind them are expected and would otherwise
+    // flood the ring buffer and push out the lines that matter.
+    private var suppressedDiscovery = 0
+    private var lastDiscoveryError = ""
+    private var lastDiscoverySummary = Date.distantPast
+
+    private func isDiscoveryNoise(_ message: String) -> Bool {
+        message.hasPrefix("Discovery failed to send") || message.hasPrefix("Discovery Service failed to send")
+    }
+
     private func append(level: ChiakiLogLevel, _ message: String) {
+        if isDiscoveryNoise(message) {
+            lock.lock()
+            suppressedDiscovery += 1
+            if message.hasPrefix("Discovery failed to send:") { lastDiscoveryError = message }
+            let due = Date().timeIntervalSince(lastDiscoverySummary) > 60
+            let count = suppressedDiscovery
+            let last = lastDiscoveryError
+            if due {
+                suppressedDiscovery = 0
+                lastDiscoverySummary = Date()
+            }
+            lock.unlock()
+            if due {
+                appendLine(level: CHIAKI_LOG_INFO,
+                           "Discovery: \(count) probe(s) got no answer in the last minute (normal for a network scan; last: \(last))")
+            }
+            return
+        }
+        appendLine(level: level, message)
+    }
+
+    private func appendLine(level: ChiakiLogLevel, _ message: String) {
         let c: String
         switch level {
         case CHIAKI_LOG_ERROR: c = "E"; logger.error("\(message, privacy: .public)")

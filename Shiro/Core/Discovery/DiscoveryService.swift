@@ -92,7 +92,7 @@ final class DiscoveryService {
         let s = UnsafeMutablePointer<ChiakiDiscoveryService>.allocate(capacity: 1)
         let user = Unmanaged.passUnretained(self).toOpaque()
         let err = unique.withUnsafeBufferPointer { buf in
-            shiro_discovery_service_start(s, buf.baseAddress, buf.count, 1500, { hosts, count, user in
+            shiro_discovery_service_start(s, buf.baseAddress, buf.count, 3000, { hosts, count, user in
                 guard let user = user else { return }
                 let me = Unmanaged<DiscoveryService>.fromOpaque(user).takeUnretainedValue()
                 me.handle(hosts: hosts, count: Int(count))

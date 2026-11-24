@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
             setenv("CURL_CA_BUNDLE", ca, 1)
         }
         signal(SIGPIPE, SIG_IGN)
+        ShiroLog.shared.info("Shiro \(Bundle.main.versionString) on iOS \(UIDevice.current.systemVersion)")
         ChiakiLib.initialize()
         _ = InputManager.shared
         return true
