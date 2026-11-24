@@ -6,6 +6,7 @@
 #include <chiaki/log.h>
 #include <chiaki/session.h>
 #include <chiaki/controller.h>
+#include <chiaki/orientation.h>
 #include <chiaki/discovery.h>
 #include <chiaki/discoveryservice.h>
 #include <chiaki/regist.h>

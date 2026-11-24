@@ -101,6 +101,7 @@ jobs:
       - name: Build
         run: |
           set -o pipefail
+          mkdir -p build
           xcodebuild \
             -project Shiro.xcodeproj -scheme Shiro -configuration Release \
             -sdk iphoneos -destination 'generic/platform=iOS' \
@@ -113,7 +114,7 @@ jobs:
 
       - name: Show build errors
         if: failure()
-        run: grep -E "error:" -A3 build/xcodebuild.log | head -300 || true
+        run: grep -E "error:" -A3 build/xcodebuild.log | head -400 || true
 
       - name: Package IPA
         run: ./scripts/package-ipa.sh build/dd/Build/Products/Release-iphoneos/Shiro.app "build/Shiro-v${{ steps.version.outputs.version }}.ipa"
