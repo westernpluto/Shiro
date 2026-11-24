@@ -109,6 +109,17 @@ struct SettingsView: View {
             Section {
                 Toggle("Show statistics overlay", isOn: $settings.showStats)
                 Toggle("Verbose logging", isOn: $settings.verboseLogging)
+                if psn.isSignedIn {
+                    Button {
+                        Task {
+                            if let token = try? await psn.validAccessToken() {
+                                await PSNDiagnostics.run(token: token)
+                            }
+                        }
+                    } label: {
+                        Label("Test PSN Remote Play connection", systemImage: "stethoscope")
+                    }
+                }
                 NavigationLink {
                     LogReviewView(names: knownNames)
                 } label: {

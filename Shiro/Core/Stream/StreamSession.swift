@@ -144,6 +144,10 @@ final class StreamSession: ObservableObject {
                 return
             }
             guard let hp = result.0 else {
+                if result.2 == 2 {
+                    // Ask Sony why, with Apple's networking stack, before reporting.
+                    await PSNDiagnostics.run(token: token)
+                }
                 fail(Self.psnFailureMessage(error: result.1, step: result.2, autoRegister: request.autoRegister))
                 return
             }
