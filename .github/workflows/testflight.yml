@@ -162,6 +162,7 @@ jobs:
             OTHER_CODE_SIGN_FLAGS="--keychain ${{ steps.signing.outputs.keychain }}" \
             | tee build/archive.log | grep -E "error:|BUILD|ARCHIVE" || true
           test -d build/Shiro.xcarchive/Products/Applications/Shiro.app
+          ./scripts/verify-app.sh build/Shiro.xcarchive/Products/Applications/Shiro.app
 
       - name: Show archive errors
         if: failure()

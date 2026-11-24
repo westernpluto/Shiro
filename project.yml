@@ -25,15 +25,12 @@ targets:
         excludes:
           - "Info.plist"
           - "Shiro.entitlements"
-    info:
-      path: Shiro/Info.plist
-    entitlements:
-      path: Shiro/Shiro.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.westernpluto.shiro
         PRODUCT_NAME: Shiro
         INFOPLIST_FILE: Shiro/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_ENTITLEMENTS: Shiro/Shiro.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor

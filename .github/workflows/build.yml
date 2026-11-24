@@ -111,6 +111,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             build | tee build/xcodebuild.log | grep -E "error:|warning: .*Shiro/|BUILD (SUCCEEDED|FAILED)" || true
           test -d build/dd/Build/Products/Release-iphoneos/Shiro.app
+          ./scripts/verify-app.sh build/dd/Build/Products/Release-iphoneos/Shiro.app
 
       - name: Show build errors
         if: failure()
