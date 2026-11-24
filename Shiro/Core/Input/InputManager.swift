@@ -264,7 +264,8 @@ final class InputManager: ObservableObject {
     }
 
     private func updateMotion(_ pad: Pad, _ m: GCMotion) {
-        guard settings.motionControls else { return }
+        // Motion only matters while streaming; skip the work otherwise.
+        guard settings.motionControls, session != nil else { return }
         let now = ProcessInfo.processInfo.systemUptime
         let ax: Double, ay: Double, az: Double
         if m.hasGravityAndUserAcceleration {
@@ -277,7 +278,9 @@ final class InputManager: ObservableObject {
         let r = m.rotationRate
         let ts = UInt32(truncatingIfNeeded: UInt64(now * 1_000_000))
         chiaki_orientation_tracker_update(pad.orientation, Float(r.x), Float(r.y), Float(r.z),
-                                          Float(ax), Float(ay), Float(az), nil, false, ts)
+                                          Float(ax), Float(ay), Float(az), nil, true, ts)
+        // accel_zero_applied = true: we pass absolute acceleration and no
+        // zero-point, so chiaki must not dereference the (nil) accel_zero.
         var s = pad.state
         chiaki_orientation_tracker_apply_to_controller_state(pad.orientation, &s)
         pad.state = s
