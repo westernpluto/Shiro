@@ -48,6 +48,8 @@ struct RegisterSheet: View {
                 } footer: {
                     if psn.isSignedIn && !canAutoRegister {
                         Text("This console isn't linked to your PSN account. Turn on Remote Play on the console while signed in with the same account, then pull to refresh.")
+                    } else if entry.discovered == nil {
+                        Text("Uses your PlayStation Network account to pair. You're not on the console's network, so this goes over the internet — if it fails, do the first setup once on the same Wi-Fi as the console; after that you can play from anywhere.")
                     } else {
                         Text("Uses your PlayStation Network account to pair — just like the official app. The console must have Remote Play enabled and be signed in to the same account.")
                     }

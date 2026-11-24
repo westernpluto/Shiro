@@ -109,8 +109,18 @@ typedef struct shiro_psn_device_t
 /** Lists the consoles linked to the PSN account. Returns number of devices written. */
 size_t shiro_psn_list_devices(const char *token, bool ps5, ShiroPsnDevice *out, size_t max, ChiakiLog *log, ChiakiErrorCode *err);
 
-/** Runs the full PSN hole-punching handshake for the control connection (blocking). */
-ChiakiErrorCode shiro_psn_connect(ChiakiHolepunchSession session, const uint8_t *duid, size_t duid_len, bool ps5);
+typedef enum shiro_psn_step_t
+{
+	SHIRO_PSN_STEP_UPNP = 1,
+	SHIRO_PSN_STEP_CREATE_SESSION = 2,   // PSN session + push-notification WebSocket
+	SHIRO_PSN_STEP_CREATE_OFFER = 3,
+	SHIRO_PSN_STEP_START_SESSION = 4,    // ask the console to join
+	SHIRO_PSN_STEP_PUNCH_HOLE = 5        // direct UDP path to the console
+} ShiroPsnStep;
+
+/** Runs the full PSN hole-punching handshake for the control connection (blocking).
+ *  On failure, @p failed_step (if not NULL) receives the ShiroPsnStep that failed. */
+ChiakiErrorCode shiro_psn_connect(ChiakiHolepunchSession session, const uint8_t *duid, size_t duid_len, bool ps5, int *failed_step);
 
 #ifdef __cplusplus
 }

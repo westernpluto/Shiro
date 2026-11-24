@@ -124,33 +124,60 @@ final class StreamSession: ObservableObject {
             let token: String
             do { token = try await PSNAuth.shared.validAccessToken() } catch { fail(error.localizedDescription); return }
             let ps5 = request.isPS5
-            let result: (ChiakiHolepunchSession?, ChiakiErrorCode) = await Task.detached(priority: .userInitiated) {
+            let result: (ChiakiHolepunchSession?, ChiakiErrorCode, Int32) = await Task.detached(priority: .userInitiated) {
                 guard let hp = token.withCString({ chiaki_holepunch_session_init($0, ShiroLog.shared.pointer) }) else {
-                    return (nil, CHIAKI_ERR_MEMORY)
+                    return (nil, CHIAKI_ERR_MEMORY, 0)
                 }
+                var step: Int32 = 0
                 let err = duidData.withUnsafeBytes { raw in
-                    shiro_psn_connect(hp, raw.bindMemory(to: UInt8.self).baseAddress, duidData.count, ps5)
+                    shiro_psn_connect(hp, raw.bindMemory(to: UInt8.self).baseAddress, duidData.count, ps5, &step)
                 }
                 if err != CHIAKI_ERR_SUCCESS {
+                    ShiroLog.shared.error("PSN connection failed at step \(step) (\(Self.psnStepName(step))): \(err.message)")
                     chiaki_holepunch_session_fini(hp)
-                    return (nil, err)
+                    return (nil, err, step)
                 }
-                return (hp, err)
+                return (hp, err, 0)
             }.value
             if stopping {
                 if let hp = result.0 { chiaki_holepunch_session_fini(hp) }
                 return
             }
             guard let hp = result.0 else {
-                switch result.1 {
-                case CHIAKI_ERR_HOST_DOWN: fail("The console is off or not connected to PSN. Enable “Stay connected to the Internet” in its Rest Mode settings.")
-                case CHIAKI_ERR_HOST_UNREACH: fail("Couldn't reach the console through your network (strict NAT). Try another network or enable UPnP on your router.")
-                default: fail("Internet connection failed: \(result.1.message)")
-                }
+                fail(Self.psnFailureMessage(error: result.1, step: result.2, autoRegister: request.autoRegister))
                 return
             }
             phase = .connecting("Linking with \(request.nickname)…")
             initSession(host: request.autoRegisterAddress ?? "", holepunch: hp)
+        }
+    }
+
+    nonisolated static func psnStepName(_ step: Int32) -> String {
+        switch step {
+        case 1: return "router UPnP"
+        case 2: return "PSN Remote Play service"
+        case 3: return "connection offer"
+        case 4: return "console handshake"
+        case 5: return "direct connection"
+        default: return "unknown"
+        }
+    }
+
+    static func psnFailureMessage(error: ChiakiErrorCode, step: Int32, autoRegister: Bool) -> String {
+        let hint = autoRegister
+            ? "\n\nIf this keeps happening, do the first setup once on the same Wi-Fi as the console (automatic or PIN). After that you can play from anywhere."
+            : ""
+        switch (step, error) {
+        case (_, CHIAKI_ERR_HOST_DOWN):
+            return "The console didn't answer through PSN. Make sure it's on or in Rest Mode with “Stay Connected to the Internet” and Remote Play enabled." + hint
+        case (5, _), (_, CHIAKI_ERR_HOST_UNREACH):
+            return "Couldn't open a direct connection to the console (strict NAT on this network or the console's). Try Wi-Fi instead of cellular, or enable UPnP on the home router." + hint
+        case (2, _):
+            return "Couldn't connect to PlayStation Network's Remote Play service (\(error.message)). Check the connection and try again; signing out and back in to PSN in Settings can help." + hint
+        case (4, _):
+            return "PSN couldn't start a session with the console (\(error.message)). Make sure Remote Play is enabled on the console and it's signed in to the same account." + hint
+        default:
+            return "Internet connection failed during \(psnStepName(step)): \(error.message)" + hint
         }
     }
 

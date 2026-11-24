@@ -215,21 +215,23 @@ size_t shiro_psn_list_devices(const char *token, bool ps5, ShiroPsnDevice *out, 
 	return n;
 }
 
-ChiakiErrorCode shiro_psn_connect(ChiakiHolepunchSession session, const uint8_t *duid, size_t duid_len, bool ps5)
+ChiakiErrorCode shiro_psn_connect(ChiakiHolepunchSession session, const uint8_t *duid, size_t duid_len, bool ps5, int *failed_step)
 {
 	(void)duid_len;
+	int step_storage = 0;
+	int *step = failed_step ? failed_step : &step_storage;
+	*step = 0;
 	ChiakiHolepunchConsoleType type = ps5 ? CHIAKI_HOLEPUNCH_CONSOLE_TYPE_PS5 : CHIAKI_HOLEPUNCH_CONSOLE_TYPE_PS4;
+	// UPnP is optional (most mobile networks have none); chiaki only uses it when found.
 	ChiakiErrorCode err = chiaki_holepunch_upnp_discover(session);
-	if(err != CHIAKI_ERR_SUCCESS)
-		return err;
+	if(err != CHIAKI_ERR_SUCCESS) { *step = SHIRO_PSN_STEP_UPNP; return err; }
 	err = chiaki_holepunch_session_create(session);
-	if(err != CHIAKI_ERR_SUCCESS)
-		return err;
+	if(err != CHIAKI_ERR_SUCCESS) { *step = SHIRO_PSN_STEP_CREATE_SESSION; return err; }
 	err = holepunch_session_create_offer(session);
-	if(err != CHIAKI_ERR_SUCCESS)
-		return err;
+	if(err != CHIAKI_ERR_SUCCESS) { *step = SHIRO_PSN_STEP_CREATE_OFFER; return err; }
 	err = chiaki_holepunch_session_start(session, duid, type);
-	if(err != CHIAKI_ERR_SUCCESS)
-		return err;
-	return chiaki_holepunch_session_punch_hole(session, CHIAKI_HOLEPUNCH_PORT_TYPE_CTRL);
+	if(err != CHIAKI_ERR_SUCCESS) { *step = SHIRO_PSN_STEP_START_SESSION; return err; }
+	err = chiaki_holepunch_session_punch_hole(session, CHIAKI_HOLEPUNCH_PORT_TYPE_CTRL);
+	if(err != CHIAKI_ERR_SUCCESS) { *step = SHIRO_PSN_STEP_PUNCH_HOLE; return err; }
+	return CHIAKI_ERR_SUCCESS;
 }
