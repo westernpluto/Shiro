@@ -1,0 +1,212 @@
+name: TestFlight (internal)
+
+# Builds a signed App Store build and uploads it to App Store Connect for
+# INTERNAL TestFlight testing only (the build is marked internal-only, so it
+# can never be sent to external testers or submitted for review from here).
+#
+# Setup: see docs/TESTFLIGHT.md for the required secrets.
+
+on:
+  workflow_dispatch:
+    inputs:
+      marketing_version:
+        description: "Marketing version (CFBundleShortVersionString). Empty = <VERSION>.0"
+        required: false
+        default: ""
+  push:
+    tags: ["testflight-*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+env:
+  XCODE_VERSION: "27.2"
+  MIN_IOS: "17.0"
+
+jobs:
+  testflight:
+    name: Archive & upload
+    runs-on: xcode-27
+    timeout-minutes: 90
+    env:
+      BUNDLE_ID: ${{ vars.BUNDLE_ID || 'io.github.westernpluto.shiro' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check secrets
+        env:
+          CERT: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12: ${{ secrets.P12_PASSWORD }}
+          PROFILE: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
+          TEAM: ${{ secrets.DEVELOPMENT_TEAM }}
+          KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+          ISSUER: ${{ secrets.APPSTORE_API_ISSUER_ID }}
+          KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+        run: |
+          missing=()
+          [ -n "$CERT" ] || missing+=(BUILD_CERTIFICATE_BASE64)
+          [ -n "$P12" ] || missing+=(P12_PASSWORD)
+          [ -n "$PROFILE" ] || missing+=(BUILD_PROVISION_PROFILE_BASE64)
+          [ -n "$TEAM" ] || missing+=(DEVELOPMENT_TEAM)
+          [ -n "$KEY_ID" ] || missing+=(APPSTORE_API_KEY_ID)
+          [ -n "$ISSUER" ] || missing+=(APPSTORE_API_ISSUER_ID)
+          [ -n "$KEY" ] || missing+=(APPSTORE_API_PRIVATE_KEY)
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing repository secrets: ${missing[*]} — see docs/TESTFLIGHT.md"
+            exit 1
+          fi
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app/Contents/Developer"
+          xcodebuild -version
+
+      # ------------------------------------------------ chiaki-ng (shared cache with build.yml)
+      - name: Cache prebuilt library
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: Vendor/Chiaki
+          key: chiaki-ios-${{ env.XCODE_VERSION }}-${{ env.MIN_IOS }}-${{ hashFiles('scripts/build-chiaki-ios.sh', 'scripts/ios-project-include.cmake', 'scripts/patches/**') }}
+
+      - name: Build chiaki-ng + dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          brew install pkgconf ninja protobuf@29 || true
+          python3 -m pip install --user --break-system-packages 'protobuf>=5,<6'
+          export PROTOC_BIN="$(brew --prefix protobuf@29)/bin/protoc"
+          ./scripts/build-chiaki-ios.sh
+
+      # ------------------------------------------------ signing
+      - name: Install certificate and provisioning profile
+        id: signing
+        env:
+          CERT: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          PROFILE: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "$CERT" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          echo "$PROFILE" | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+
+          security cms -D -i "$RUNNER_TEMP/profile.mobileprovision" > "$RUNNER_TEMP/profile.plist"
+          UUID=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$RUNNER_TEMP/profile.plist")
+          NAME=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$RUNNER_TEMP/profile.plist")
+          APPID=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$RUNNER_TEMP/profile.plist")
+          echo "Profile: $NAME ($UUID) for $APPID"
+          case "$APPID" in
+            *".${BUNDLE_ID}") ;;
+            *) echo "::error::Provisioning profile is for $APPID but the bundle id is $BUNDLE_ID (set the BUNDLE_ID repository variable to change it)"; exit 1 ;;
+          esac
+          for d in "$HOME/Library/MobileDevice/Provisioning Profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
+            mkdir -p "$d"
+            cp "$RUNNER_TEMP/profile.mobileprovision" "$d/$UUID.mobileprovision"
+          done
+          echo "profile_name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "keychain=$KEYCHAIN" >> "$GITHUB_OUTPUT"
+
+      - name: Write App Store Connect API key
+        env:
+          KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+          KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/keys"
+          printf '%s\n' "$KEY" > "$RUNNER_TEMP/keys/AuthKey_${KEY_ID}.p8"
+
+      # ------------------------------------------------ build
+      - name: Compute version
+        id: version
+        run: |
+          BASE="$(tr -d ' \n' < VERSION)"
+          MARKETING="${{ inputs.marketing_version }}"
+          [ -n "$MARKETING" ] || MARKETING="${BASE}.0"
+          echo "marketing=$MARKETING" >> "$GITHUB_OUTPUT"
+          echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "TestFlight $MARKETING (${GITHUB_RUN_NUMBER})"
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Archive
+        env:
+          TEAM: ${{ secrets.DEVELOPMENT_TEAM }}
+        run: |
+          set -o pipefail
+          mkdir -p build
+          xcodebuild archive \
+            -project Shiro.xcodeproj -scheme Shiro -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Shiro.xcarchive \
+            -derivedDataPath build/dd \
+            MARKETING_VERSION="${{ steps.version.outputs.marketing }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build }}" \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            DEVELOPMENT_TEAM="$TEAM" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="${{ steps.signing.outputs.profile_name }}" \
+            OTHER_CODE_SIGN_FLAGS="--keychain ${{ steps.signing.outputs.keychain }}" \
+            | tee build/archive.log | grep -E "error:|BUILD|ARCHIVE" || true
+          test -d build/Shiro.xcarchive/Products/Applications/Shiro.app
+
+      - name: Show archive errors
+        if: failure()
+        run: grep -E "error:" -A3 build/archive.log | head -400 || true
+
+      - name: Export & upload to App Store Connect
+        env:
+          TEAM: ${{ secrets.DEVELOPMENT_TEAM }}
+          KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+          ISSUER: ${{ secrets.APPSTORE_API_ISSUER_ID }}
+        run: |
+          cat > build/ExportOptions.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>${TEAM}</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>Apple Distribution</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>${BUNDLE_ID}</key><string>${{ steps.signing.outputs.profile_name }}</string>
+            </dict>
+            <key>testFlightInternalTestingOnly</key><true/>
+            <key>uploadSymbols</key><true/>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath build/Shiro.xcarchive \
+            -exportOptionsPlist build/ExportOptions.plist \
+            -exportPath build/export \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey_${KEY_ID}.p8" \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER"
+          echo "### Uploaded Shiro ${{ steps.version.outputs.marketing }} (${{ steps.version.outputs.build }}) to TestFlight (internal testing only)" >> "$GITHUB_STEP_SUMMARY"
+          echo "It appears in App Store Connect › TestFlight after Apple finishes processing (usually 5–30 minutes)." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean up signing material
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -rf "$RUNNER_TEMP/keys" "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/profile.mobileprovision" "$RUNNER_TEMP/profile.plist"
+          rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/"*.mobileprovision

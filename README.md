@@ -49,13 +49,13 @@ Built against the iOS 27.1 SDK following Apple's *Designing for iPhone Duo* guid
 
 ### Couch co-op
 
-PlayStation Remote Play sends **one** controller's input to the console; Sony's protocol has no way to send a second player. Shiro still works with any number of controllers connected to the iPhone and offers three modes:
+Any number of controllers can be connected to the iPhone at once. The chiaki-ng protocol layer Shiro currently uses sends **one** controller's input to the console, so for now there are three modes:
 
 - **Shared:** every controller drives the game at the same time. Good for helping someone through a section, or for games with shared control.
 - **Hand-off:** whoever pressed a button last has control, with no re-pairing.
 - **Player 1 only.**
 
-For true split-screen multiplayer, connect the extra controllers directly to the console. They play alongside the streamed player.
+PS5 Remote Play itself can carry several players (other clients offer 4-player couch co-op). Real multi-player input is planned for Shiro's own protocol implementation. Until then, for split-screen multiplayer, connect the extra controllers directly to the console; they play alongside the streamed player.
 
 ## First run
 
@@ -100,12 +100,11 @@ Shiro/
 scripts/          dependency build, IPA packaging, AltStore source generator
 ```
 
-## TestFlight / App Store
+## TestFlight
 
-The release pipeline creates unsigned (fakesigned) IPAs for sideloading. Before submitting to TestFlight, note the following:
+**Internal testing is ready.** `.github/workflows/testflight.yml` signs, archives and uploads an internal-only TestFlight build. See [docs/TESTFLIGHT.md](docs/TESTFLIGHT.md) for the one-time setup: certificate, profile, API key and repository secrets.
 
-- Shiro links chiaki-ng, which is **AGPL-3.0**. Shiro is therefore AGPL-3.0 too (see `LICENSE`). Distributing through the App Store adds Apple's usage terms, and those are widely considered incompatible with the GPL family. Get permission from the chiaki-ng copyright holders, or replace the protocol layer, before shipping there.
-- Add a signing team and the **Multicast Networking** entitlement (`com.apple.developer.networking.multicast`). With it, broadcast discovery works alongside the unicast sweep Shiro already uses.
+**External TestFlight and the App Store are not ready.** Shiro links chiaki-ng, which is **AGPL-3.0**, so Shiro is AGPL-3.0 too (see `LICENSE`). Public distribution through Apple adds usage terms that are widely considered incompatible with the GPL family. A licence-clean protocol implementation is planned before any public release.
 
 ## License
 
