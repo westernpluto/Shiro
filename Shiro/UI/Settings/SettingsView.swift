@@ -6,7 +6,6 @@ struct SettingsView: View {
     @EnvironmentObject private var store: ConsoleStore
     @EnvironmentObject private var display: DisplayManager
     @State private var showLogin = false
-    @State private var exportURL: URL?
 
     var body: some View {
         Form {
@@ -107,13 +106,18 @@ struct SettingsView: View {
                 Text("Manually added addresses are also scanned. Higher packet-loss tolerance keeps the bitrate up on lossy Wi-Fi at the cost of more artifacts.")
             }
 
-            Section("Diagnostics") {
+            Section {
                 Toggle("Show statistics overlay", isOn: $settings.showStats)
                 Toggle("Verbose logging", isOn: $settings.verboseLogging)
-                Button { exportURL = ShiroLog.shared.export() } label: { Label("Export log", systemImage: "doc.text") }
-                if let url = exportURL {
-                    ShareLink(item: url) { Label("Share log", systemImage: "square.and.arrow.up") }
+                NavigationLink {
+                    LogReviewView(names: knownNames)
+                } label: {
+                    Label("Review & share log", systemImage: "doc.text.magnifyingglass")
                 }
+            } header: {
+                Text("Diagnostics")
+            } footer: {
+                Text("Logs stay on this iPhone unless you share them. Before sharing, console names, IP and MAC addresses, console IDs, e-mail addresses and anything token-like are replaced with placeholders — you can read exactly what will be sent first.")
             }
 
             Section {
@@ -132,6 +136,12 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .sheet(isPresented: $showLogin) { PSNLoginView() }
+    }
+
+    private var knownNames: [String] {
+        store.registered.map(\.nickname)
+            + store.discovered.values.map(\.name)
+            + store.psnDevices.map(\.name)
     }
 
     private func bitrateRow(title: String, value: Binding<Int>) -> some View {
@@ -205,5 +215,35 @@ extension Bundle {
         let v = infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let b = infoDictionary?["CFBundleVersion"] as? String ?? "?"
         return "\(v) (\(b))"
+    }
+}
+
+/// Shows the redacted log so the user can check what they're sharing.
+struct LogReviewView: View {
+    let names: [String]
+    @State private var text = ""
+    @State private var fileURL: URL?
+
+    var body: some View {
+        ScrollView {
+            Text(text.isEmpty ? "The log is empty." : text)
+                .font(.system(size: 11, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+        }
+        .navigationTitle("Log (redacted)")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                if let url = fileURL {
+                    ShareLink(item: url) { Label("Share", systemImage: "square.and.arrow.up") }
+                }
+            }
+        }
+        .onAppear {
+            text = ShiroLog.redact(ShiroLog.shared.snapshot(), names: names)
+            fileURL = ShiroLog.shared.export(redactingNames: names)
+        }
     }
 }
