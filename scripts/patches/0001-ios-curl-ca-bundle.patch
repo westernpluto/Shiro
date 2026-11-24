@@ -1,0 +1,29 @@
+diff --git a/lib/src/aia.h b/lib/src/aia.h
+index 046c218..4b2f204 100644
+--- a/lib/src/aia.h
++++ b/lib/src/aia.h
+@@ -10,6 +10,24 @@
+ #include <stdint.h>
+ #include <stdio.h>
+ #include <curl/curl.h>
++#include <stdlib.h>
++
++#if defined(__APPLE__)
++/*
++ * Shiro (iOS): OpenSSL-backed libcurl has no access to the iOS trust store and
++ * chiaki's AIA chain recovery derives its trust store from CURLOPT_CAINFO.
++ * Point every handle at the CA bundle the app exports in SSL_CERT_FILE.
++ */
++static inline CURL *shiro_curl_easy_init_with_ca(void)
++{
++	CURL *handle = (curl_easy_init)();
++	const char *ca = getenv("SSL_CERT_FILE");
++	if(handle && ca && *ca)
++		curl_easy_setopt(handle, CURLOPT_CAINFO, ca);
++	return handle;
++}
++#define curl_easy_init() shiro_curl_easy_init_with_ca()
++#endif
+ 
+ #ifdef __cplusplus
+ extern "C" {

@@ -53,6 +53,7 @@ final class DiscoveryService {
     }
 
     private func stopLocked() {
+        currentAddresses = []
         if let s = service {
             chiaki_discovery_service_fini(s)
             s.deallocate()
@@ -60,10 +61,13 @@ final class DiscoveryService {
         }
     }
 
+    private var currentAddresses: [UInt32] = []
+    private var loggedNoNetwork = false
+
     private func restartLocked() {
-        stopLocked()
+        let interfaces = NetworkInterfaces.ipv4Interfaces()
         var addrs: [UInt32] = []
-        for iface in NetworkInterfaces.ipv4Interfaces() {
+        for iface in interfaces {
             addrs.append(contentsOf: iface.sweepAddresses())
         }
         for h in extraHosts {
@@ -71,6 +75,20 @@ final class DiscoveryService {
         }
         var seen = Set<UInt32>()
         let unique = addrs.filter { seen.insert($0).inserted }.map { $0.bigEndian }
+
+        // Network path updates fire often; only restart when the targets change.
+        if service != nil && unique == currentAddresses { return }
+        stopLocked()
+        currentAddresses = unique
+        if unique.isEmpty {
+            if !loggedNoNetwork {
+                loggedNoNetwork = true
+                ShiroLog.shared.info("Local discovery paused: no Wi-Fi or Ethernet network (consoles on your PSN account are still listed)")
+            }
+            onUpdate?([])
+            return
+        }
+        loggedNoNetwork = false
         let s = UnsafeMutablePointer<ChiakiDiscoveryService>.allocate(capacity: 1)
         let user = Unmanaged.passUnretained(self).toOpaque()
         let err = unique.withUnsafeBufferPointer { buf in
@@ -86,7 +104,7 @@ final class DiscoveryService {
             return
         }
         service = s
-        ShiroLog.shared.info("Discovery sweeping \(unique.count) addresses")
+        ShiroLog.shared.info("Discovery sweeping \(unique.count) addresses on \(interfaces.map(\.name).joined(separator: ", "))")
     }
 
     private func handle(hosts: UnsafeMutablePointer<ChiakiDiscoveryHost>?, count: Int) {

@@ -14,19 +14,14 @@ enum PSNDeviceList {
     static let ps4ConnectDuid = Data(repeating: 0x41, count: 32).hexString
 
     static func fetch(token: String) async throws -> [PSNDevice] {
-        var devices: [PSNDevice] = []
-        var errors: [String] = []
-        for platform in ["PS5", "PS4"] {
-            do {
-                devices += try await fetch(platform: platform, token: token)
-            } catch {
-                errors.append("\(platform): \(error.localizedDescription)")
-                ShiroLog.shared.warn("PSN \(platform) device list failed: \(error.localizedDescription)")
-            }
-        }
-        // Only fail outright when nothing could be listed at all.
-        if devices.isEmpty, errors.count == 2 {
-            throw Failure(message: "Couldn't load your consoles from PSN (\(errors.joined(separator: "; "))).")
+        // Sony's device list only covers PS5 (PS4 requests return HTTP 400); PS4
+        // internet play goes through the account's primary PS4 instead.
+        let devices: [PSNDevice]
+        do {
+            devices = try await fetch(platform: "PS5", token: token)
+        } catch {
+            ShiroLog.shared.warn("PSN device list failed: \(error.localizedDescription)")
+            throw Failure(message: "Couldn't load your consoles from PSN: \(error.localizedDescription)")
         }
         ShiroLog.shared.info("PSN account has \(devices.count) console(s): " +
             devices.map { "\($0.name) [\($0.isPS5 ? "PS5" : "PS4")\($0.remotePlayEnabled ? "" : ", Remote Play off")]" }.joined(separator: ", "))

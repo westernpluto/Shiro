@@ -42,10 +42,14 @@ enum NetworkInterfaces {
                   let addr = p.pointee.ifa_addr, addr.pointee.sa_family == UInt8(AF_INET),
                   let mask = p.pointee.ifa_netmask else { continue }
             let name = String(cString: p.pointee.ifa_name)
-            // Wi-Fi (en*), USB/Ethernet adapters (en*), personal hotspot bridge.
-            guard name.hasPrefix("en") || name.hasPrefix("bridge") else { continue }
+            // Skip cellular, VPN tunnels and Apple peer-to-peer links; keep Wi-Fi,
+            // Ethernet / USB adapters and the personal-hotspot bridge.
+            let excluded = ["pdp_ip", "utun", "ipsec", "awdl", "llw", "anpi", "gif", "stf", "ap"]
+            guard !excluded.contains(where: { name.hasPrefix($0) }) else { continue }
             let a = addr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { UInt32(bigEndian: $0.pointee.sin_addr.s_addr) }
             let m = mask.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { UInt32(bigEndian: $0.pointee.sin_addr.s_addr) }
+            // Ignore link-local (169.254.x.x) self-assigned addresses.
+            guard (a >> 16) != 0xA9FE else { continue }
             result.append(IPv4Interface(name: name, address: a, netmask: m))
         }
         return result.sorted { $0.name < $1.name }
