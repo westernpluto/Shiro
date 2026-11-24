@@ -112,8 +112,11 @@ struct SettingsView: View {
                 if psn.isSignedIn {
                     Button {
                         Task {
-                            if let token = try? await psn.validAccessToken() {
-                                await PSNDiagnostics.run(token: token)
+                            if PSNDiagnostics.backoffRemaining > 0 {
+                                ShiroLog.shared.info("PSN diagnostics skipped: still in Sony's back-off for \(Int(PSNDiagnostics.backoffRemaining)) s")
+                            } else if let token = try? await psn.validAccessToken() {
+                                let r = await PSNDiagnostics.run(token: token)
+                                if r.status == 403 { PSNDiagnostics.startBackoff(seconds: max(r.retryMinSeconds ?? 120, 120)) }
                             }
                         }
                     } label: {

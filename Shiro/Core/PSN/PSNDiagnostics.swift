@@ -8,8 +8,29 @@ import Network
 enum PSNDiagnostics {
     private static let serverAddrURL = URL(string: "https://mobile-pushcl.np.communication.playstation.net/np/serveraddr?version=2.1&fields=keepAliveStatus&keepAliveStatusType=3")!
 
-    static func run(token: String) async {
+    struct Result {
+        var status: Int?
+        var retryMinSeconds: Int?
+    }
+
+    // MARK: Back-off (Sony sends X-PSN-RETRY-INTERVAL-MIN/MAX with its 403s)
+
+    private static let backoffKey = "psn.pushBackoffUntil"
+
+    static var backoffRemaining: TimeInterval {
+        let until = UserDefaults.standard.double(forKey: backoffKey)
+        return max(0, until - Date().timeIntervalSince1970)
+    }
+
+    static func startBackoff(seconds: Int) {
+        UserDefaults.standard.set(Date().timeIntervalSince1970 + Double(seconds), forKey: backoffKey)
+        ShiroLog.shared.warn("PSN asked us to wait \(seconds) s before reconnecting; pausing internet connections until then")
+    }
+
+    @discardableResult
+    static func run(token: String) async -> Result {
         let log = ShiroLog.shared
+        var result = Result()
         log.info("PSN diagnostics: starting")
 
         // 1. Which push server should we use?
@@ -24,35 +45,37 @@ enum PSNDiagnostics {
             log.info("PSN diagnostics: serveraddr HTTP \(status): \(body)")
             guard status == 200,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let f = json["fqdn"] as? String, !f.isEmpty else { return }
+                  let f = json["fqdn"] as? String, !f.isEmpty else { return result }
             fqdn = f
         } catch {
             log.error("PSN diagnostics: serveraddr failed: \(error.localizedDescription)")
-            return
+            return result
         }
 
-        // 2. The WebSocket upgrade itself, with the same headers chiaki-ng sends.
-        let variants: [(String, [(String, String)])] = [
-            ("chiaki headers", [
-                ("Sec-WebSocket-Protocol", "np-pushpacket"),
-                ("User-Agent", "WebSocket++/0.8.2"),
-                ("X-PSN-APP-TYPE", "REMOTE_PLAY"),
-                ("X-PSN-APP-VER", "RemotePlay/1.0"),
-                ("X-PSN-KEEP-ALIVE-STATUS-TYPE", "3"),
-                ("X-PSN-OS-VER", "Windows/10.0"),
-                ("X-PSN-PROTOCOL-VERSION", "2.1"),
-                ("X-PSN-RECONNECTION", "false"),
-            ]),
-            ("minimal headers", [
-                ("Sec-WebSocket-Protocol", "np-pushpacket"),
-                ("X-PSN-PROTOCOL-VERSION", "2.1"),
-            ]),
-        ]
-        for (name, headers) in variants {
-            let reply = await upgrade(host: fqdn, token: token, extraHeaders: headers)
-            log.info("PSN diagnostics: WebSocket upgrade (\(name)) → \(reply)")
+        // 2. One WebSocket upgrade with the same headers chiaki-ng sends.
+        //    (Only one: every refused attempt can extend Sony's back-off.)
+        let reply = await upgrade(host: fqdn, token: token, extraHeaders: [
+            ("Sec-WebSocket-Protocol", "np-pushpacket"),
+            ("User-Agent", "WebSocket++/0.8.2"),
+            ("X-PSN-APP-TYPE", "REMOTE_PLAY"),
+            ("X-PSN-APP-VER", "RemotePlay/1.0"),
+            ("X-PSN-KEEP-ALIVE-STATUS-TYPE", "3"),
+            ("X-PSN-OS-VER", "Windows/10.0"),
+            ("X-PSN-PROTOCOL-VERSION", "2.1"),
+            ("X-PSN-RECONNECTION", "false"),
+        ])
+        log.info("PSN diagnostics: WebSocket upgrade → \(reply)")
+        let statusLine = reply.components(separatedBy: "\r\n").first ?? ""
+        let parts = statusLine.split(separator: " ")
+        if parts.count >= 2 { result.status = Int(parts[1]) }
+        for line in reply.components(separatedBy: "\r\n") {
+            let lower = line.lowercased()
+            if lower.hasPrefix("x-psn-retry-interval-min:") {
+                result.retryMinSeconds = Int(line.split(separator: ":").last?.trimmingCharacters(in: .whitespaces) ?? "")
+            }
         }
         log.info("PSN diagnostics: done")
+        return result
     }
 
     /// Opens TLS to host:443, sends an HTTP/1.1 WebSocket upgrade request and

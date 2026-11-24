@@ -121,6 +121,11 @@ final class StreamSession: ObservableObject {
         case .psn(let duid):
             phase = .connecting(request.autoRegister ? "Registering with PSN…" : "Reaching \(request.nickname) over the internet…")
             guard let duidData = Data(hex: duid) else { fail("Invalid console id"); return }
+            let wait = PSNDiagnostics.backoffRemaining
+            if wait > 0 {
+                fail("PlayStation Network asked Shiro to wait before reconnecting. Try again in about \(Int(ceil(wait / 60))) minute(s) — retrying sooner only extends the wait.")
+                return
+            }
             let token: String
             do { token = try await PSNAuth.shared.validAccessToken() } catch { fail(error.localizedDescription); return }
             let ps5 = request.isPS5
@@ -145,8 +150,14 @@ final class StreamSession: ObservableObject {
             }
             guard let hp = result.0 else {
                 if result.2 == 2 {
-                    // Ask Sony why, with Apple's networking stack, before reporting.
-                    await PSNDiagnostics.run(token: token)
+                    // Ask Sony why (one request), and honour its back-off.
+                    let diag = await PSNDiagnostics.run(token: token)
+                    if diag.status == 403 {
+                        let wait = max(diag.retryMinSeconds ?? 120, 120)
+                        PSNDiagnostics.startBackoff(seconds: wait)
+                        fail("PlayStation Network refused the Remote Play connection for this account (HTTP 403) and asked Shiro to wait at least \(wait / 60) minute(s).\n\nClose the official PS Remote Play and PlayStation apps, wait, then try once. Repeated attempts extend the wait.")
+                        return
+                    }
                 }
                 fail(Self.psnFailureMessage(error: result.1, step: result.2, autoRegister: request.autoRegister))
                 return
