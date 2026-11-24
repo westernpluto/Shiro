@@ -8,6 +8,15 @@ struct PSNCredentials: Codable {
     /// 8-byte little-endian PSN account id (what consoles call "AccountID").
     var accountId: Data
     var userId: String
+    /// Scopes Sony actually granted (nil for sign-ins made by older builds).
+    var grantedScope: String? = nil
+
+    /// Internet Remote Play needs the push-notification and session scopes.
+    var hasRemotePlayScopes: Bool {
+        guard let g = grantedScope else { return false }
+        return g.contains("pushNotification:webSocket.desktop.connect")
+            && g.contains("sessionManager:remotePlaySession.system.update")
+    }
 }
 
 enum PSNError: LocalizedError {
@@ -59,7 +68,25 @@ final class PSNAuth: ObservableObject {
     private static let keychainKey = "psn.credentials"
 
     private init() {
-        credentials = Keychain.codable(PSNCredentials.self, for: Self.keychainKey)
+        let stored = Keychain.codable(PSNCredentials.self, for: Self.keychainKey)
+        if let c = stored, !c.hasRemotePlayScopes {
+            // Older builds sent the scope list in a form Sony only partly
+            // understood, so those tokens can't open the Remote Play push
+            // channel (HTTP 403). Ask the user to sign in again.
+            ShiroLog.shared.warn("Stored PSN sign-in lacks Remote Play permissions (granted: \(c.grantedScope ?? "unknown")); signing out so you can sign in again")
+            Keychain.setCodable(Optional<PSNCredentials>.none, for: Self.keychainKey)
+            credentials = nil
+        } else {
+            credentials = stored
+        }
+    }
+
+    /// Form body with the scope list sent exactly as Sony's own client does
+    /// (literal spaces — Sony does not decode '+' as a space here).
+    private static func tokenBody(_ fields: [(String, String)]) -> String {
+        fields.map { key, value in
+            key == "scope" ? "\(key)=\(value)" : "\(key)=\(value.formEncoded)"
+        }.joined(separator: "&")
     }
 
     /// Extracts the `code` parameter from the redirect URL (or from text the user pasted).
@@ -75,16 +102,22 @@ final class PSNAuth: ObservableObject {
     }
 
     func signIn(code: String) async throws {
-        let tokens = try await requestToken(body: "grant_type=authorization_code&code=\(code.formEncoded)&scope=\(Self.scope.formEncoded)&redirect_uri=\(Self.redirectURL.formEncoded)")
+        let tokens = try await requestToken(body: Self.tokenBody([
+            ("grant_type", "authorization_code"), ("code", code),
+            ("scope", Self.scope), ("redirect_uri", Self.redirectURL)]))
         let userId = try await fetchUserId(accessToken: tokens.access)
         guard let uid = UInt64(userId) else { throw PSNError.decoding }
         var le = uid.littleEndian
         let accountId = Data(bytes: &le, count: 8)
         let creds = PSNCredentials(accessToken: tokens.access, refreshToken: tokens.refresh,
                                    expiry: Date().addingTimeInterval(TimeInterval(tokens.expiresIn)),
-                                   accountId: accountId, userId: userId)
+                                   accountId: accountId, userId: userId,
+                                   grantedScope: tokens.scope ?? Self.scope)
         store(creds)
-        ShiroLog.shared.info("Signed in to PSN")
+        ShiroLog.shared.info("Signed in to PSN (granted scopes: \(tokens.scope ?? "not reported"))")
+        if !creds.hasRemotePlayScopes {
+            ShiroLog.shared.warn("PSN did not grant the Remote Play scopes; internet play and automatic registration will not work")
+        }
     }
 
     func signOut() {
@@ -95,8 +128,11 @@ final class PSNAuth: ObservableObject {
     func validAccessToken() async throws -> String {
         guard var creds = credentials else { throw PSNError.notLoggedIn }
         if creds.expiry.timeIntervalSinceNow > 60 { return creds.accessToken }
-        let tokens = try await requestToken(body: "grant_type=refresh_token&refresh_token=\(creds.refreshToken.formEncoded)&scope=\(Self.scope.formEncoded)&redirect_uri=\(Self.redirectURL.formEncoded)")
+        let tokens = try await requestToken(body: Self.tokenBody([
+            ("grant_type", "refresh_token"), ("refresh_token", creds.refreshToken),
+            ("scope", Self.scope), ("redirect_uri", Self.redirectURL)]))
         creds.accessToken = tokens.access
+        if let granted = tokens.scope { creds.grantedScope = granted }
         if !tokens.refresh.isEmpty { creds.refreshToken = tokens.refresh }
         creds.expiry = Date().addingTimeInterval(TimeInterval(tokens.expiresIn))
         store(creds)
@@ -112,7 +148,7 @@ final class PSNAuth: ObservableObject {
         "Basic " + Data("\(Self.clientId):\(Self.clientSecret)".utf8).base64EncodedString()
     }
 
-    private func requestToken(body: String) async throws -> (access: String, refresh: String, expiresIn: Int) {
+    private func requestToken(body: String) async throws -> (access: String, refresh: String, expiresIn: Int, scope: String?) {
         var req = URLRequest(url: Self.tokenURL)
         req.httpMethod = "POST"
         req.setValue(basicAuth, forHTTPHeaderField: "Authorization")
@@ -128,7 +164,7 @@ final class PSNAuth: ObservableObject {
               let access = json["access_token"] as? String else { throw PSNError.decoding }
         let refresh = json["refresh_token"] as? String ?? ""
         let expires = (json["expires_in"] as? Int) ?? Int((json["expires_in"] as? Double) ?? 3600)
-        return (access, refresh, expires)
+        return (access, refresh, expires, json["scope"] as? String)
     }
 
     private func fetchUserId(accessToken: String) async throws -> String {
