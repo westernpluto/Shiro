@@ -17,7 +17,7 @@ permissions:
 
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   # Xcode 27.1+ is required for the iPhone Duo SDK (ReservedRegion / ArrangementView, iOS 27.1).

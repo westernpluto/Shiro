@@ -9,6 +9,11 @@ enum FoldState: Equatable {
     case flat
     /// Partially folded. `axis` is the direction in which the two halves are laid out.
     case folded(axis: Axis, hinge: CGRect)
+
+    var isFolded: Bool {
+        if case .folded = self { return true }
+        return false
+    }
 }
 
 extension GeometryProxy {
@@ -46,7 +51,7 @@ struct FoldArrangement<Primary: View, Secondary: View>: View {
     var body: some View {
         GeometryReader { proxy in
             let fold = proxy.foldState
-            if splitWhenFolded, case .folded = fold {
+            if splitWhenFolded && fold.isFolded {
                 splitView(proxy: proxy, fold: fold)
             } else {
                 primary()
@@ -73,7 +78,8 @@ struct FoldArrangement<Primary: View, Secondary: View>: View {
     /// either side of the hinge rectangle.
     @ViewBuilder
     private func manualSplit(proxy: GeometryProxy, fold: FoldState) -> some View {
-        if case .folded(let axis, let hinge) = fold {
+        switch fold {
+        case .folded(let axis, let hinge):
             if axis == .horizontal {
                 HStack(spacing: 0) {
                     primary().frame(width: max(0, hinge.minX))
@@ -87,7 +93,7 @@ struct FoldArrangement<Primary: View, Secondary: View>: View {
                     secondary().frame(maxHeight: .infinity)
                 }
             }
-        } else {
+        case .flat:
             primary()
         }
     }

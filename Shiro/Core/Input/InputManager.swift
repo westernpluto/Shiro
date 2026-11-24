@@ -59,6 +59,9 @@ final class InputManager: ObservableObject {
     private var hapticScale: Float = 1
     private var triggerScale: Float = 1
     private var deviceMotor: RumbleMotor?
+    // Snapshots owned by hapticsQueue (pads/order are mutated on the main thread).
+    private var hPads: [ObjectIdentifier: Pad] = [:]
+    private var hActive: ObjectIdentifier?
 
     private init() {
         chiaki_controller_state_set_idle(&virtualState)
@@ -98,13 +101,12 @@ final class InputManager: ObservableObject {
         hapticsQueue.async { [weak self] in
             guard let self = self else { return }
             self.rumbleLeft = 0; self.rumbleRight = 0; self.envLeft = 0; self.envRight = 0
-            for pad in self.pads.values { pad.motors.forEach { $0.stop() } }
+            for pad in self.hPads.values { pad.motors.forEach { $0.stop() }; pad.motors = [] }
             self.deviceMotor?.stop()
             self.deviceMotor = nil
         }
         DispatchQueue.main.async {
             for pad in self.pads.values {
-                pad.motors = []
                 if let ds = pad.controller.physicalInputProfile as? GCDualSenseGamepad {
                     ds.leftTrigger.setModeOff()
                     ds.rightTrigger.setModeOff()
@@ -166,6 +168,8 @@ final class InputManager: ObservableObject {
 
     private func publish() {
         let active = activePadId()
+        let snapshot = pads
+        hapticsQueue.async { self.hPads = snapshot; self.hActive = active }
         controllers = order.compactMap { id in
             guard let p = pads[id] else { return nil }
             let c = p.controller
@@ -418,9 +422,9 @@ final class InputManager: ObservableObject {
         let scale = Float(settings.rumbleIntensity) * hapticScale
         let l = min(1, max(rumbleLeft, envLeft * 1.6)) * scale
         let r = min(1, max(rumbleRight, envRight * 1.6)) * scale
-        let active = activePadId()
+        let active = hActive
         var any = false
-        for (id, pad) in pads where active == nil || active == id {
+        for (id, pad) in hPads where active == nil || active == id {
             any = any || !pad.motors.isEmpty
             if pad.motors.count == 2 {
                 pad.motors[0].set(l)
