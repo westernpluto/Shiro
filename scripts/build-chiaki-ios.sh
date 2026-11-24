@@ -141,6 +141,8 @@ cmake -S "$SRC/chiaki-ng" -B "$WORK/build-chiaki" "${COMMON_CMAKE[@]}" \
   -DCURL_USE_LIBSSH2=OFF -DCURL_USE_LIBSSH=OFF -DCURL_USE_GSSAPI=OFF -DCURL_DISABLE_LDAP=ON \
   -DCURL_CA_BUNDLE=none -DCURL_CA_PATH=none -DCURL_CA_FALLBACK=ON \
   -DCURL_USE_PKGCONFIG=OFF -DENABLE_CURL_MANUAL=OFF -DBUILD_LIBCURL_DOCS=OFF -DBUILD_MISC_DOCS=OFF \
+  -DCMAKE_PROJECT_INCLUDE="$ROOT/scripts/ios-project-include.cmake" \
+  -DPKG_CONFIG_EXECUTABLE="$(command -v pkg-config || command -v pkgconf)" \
   -DPROTOC="$PROTOC_BIN" -DPYTHON_EXECUTABLE="$PYTHON_BIN" -DPython3_EXECUTABLE="$PYTHON_BIN"
 
 cmake --build "$WORK/build-chiaki" -j"$JOBS" --target chiaki-lib

@@ -43,7 +43,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: Vendor/Chiaki
-          key: chiaki-ios-${{ env.XCODE_VERSION }}-${{ env.MIN_IOS }}-${{ hashFiles('scripts/build-chiaki-ios.sh', 'scripts/patches/**') }}
+          key: chiaki-ios-${{ env.XCODE_VERSION }}-${{ env.MIN_IOS }}-${{ hashFiles('scripts/build-chiaki-ios.sh', 'scripts/ios-project-include.cmake', 'scripts/patches/**') }}
 
       - name: Install build tools
         if: steps.cache.outputs.cache-hit != 'true'
