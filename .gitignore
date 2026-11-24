@@ -6,3 +6,13 @@ xcuserdata/
 DerivedData/
 .DS_Store
 *.ipa
+# Signing material — never commit (see docs/TESTFLIGHT.md)
+*.p12
+*.p12.b64
+*.p8
+*.mobileprovision
+*.cer
+*.pem
+*.csr
+*.key
+profile.b64
