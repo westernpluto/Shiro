@@ -1,0 +1,167 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main, "claude/**"]
+    paths-ignore: ["**.md", "docs/**", "LICENSE"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Publish a GitHub release + update the AltStore source"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Xcode 27.1+ is required for the iPhone Duo SDK (ReservedRegion / ArrangementView, iOS 27.1).
+  XCODE_VERSION: "27.2"
+  MIN_IOS: "17.0"
+
+jobs:
+  deps:
+    name: chiaki-ng for iOS
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app/Contents/Developer"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Cache prebuilt library
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: Vendor/Chiaki
+          key: chiaki-ios-${{ env.XCODE_VERSION }}-${{ env.MIN_IOS }}-${{ hashFiles('scripts/build-chiaki-ios.sh', 'scripts/patches/**') }}
+
+      - name: Install build tools
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          brew install pkgconf ninja protobuf@29 || true
+          echo "$(brew --prefix protobuf@29)/bin" >> "$GITHUB_PATH"
+          python3 -m pip install --user --break-system-packages 'protobuf>=5,<6'
+
+      - name: Build chiaki-ng + dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          export PROTOC_BIN="$(brew --prefix protobuf@29)/bin/protoc"
+          ./scripts/build-chiaki-ios.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chiaki-ios
+          path: Vendor/Chiaki
+          retention-days: 7
+
+  app:
+    name: Shiro.ipa
+    needs: deps
+    runs-on: xcode-27
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app/Contents/Developer"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: chiaki-ios
+          path: Vendor/Chiaki
+
+      - name: Compute version
+        id: version
+        run: |
+          BASE="$(tr -d ' \n' < VERSION)"
+          BUILD="${GITHUB_RUN_NUMBER}"
+          VERSION="${BASE}.${BUILD}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "Version $VERSION ($BUILD)"
+
+      - name: Install XcodeGen + ldid
+        run: brew install xcodegen ldid
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Shiro.xcodeproj -scheme Shiro -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build/dd \
+            MARKETING_VERSION="${{ steps.version.outputs.version }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build }}" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tee build/xcodebuild.log | grep -E "error:|warning: .*Shiro/|BUILD (SUCCEEDED|FAILED)" || true
+          test -d build/dd/Build/Products/Release-iphoneos/Shiro.app
+
+      - name: Show build errors
+        if: failure()
+        run: grep -E "error:" -A3 build/xcodebuild.log | head -300 || true
+
+      - name: Package IPA
+        run: ./scripts/package-ipa.sh build/dd/Build/Products/Release-iphoneos/Shiro.app "build/Shiro-v${{ steps.version.outputs.version }}.ipa"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Shiro-v${{ steps.version.outputs.version }}
+          path: build/Shiro-v${{ steps.version.outputs.version }}.ipa
+
+  release:
+    name: Publish release
+    needs: app
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && inputs.release
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.app.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: Shiro-v${{ needs.app.outputs.version }}
+          path: dist
+
+      - name: Create release
+        run: |
+          IPA="dist/Shiro-v${VERSION}.ipa"
+          NOTES="$(git log -1 --pretty=format:'%s%n%n%b')"
+          gh release create "v${VERSION}" "$IPA" \
+            --target "${GITHUB_SHA}" \
+            --title "Shiro ${VERSION}" \
+            --notes "${NOTES}
+
+          **Install:** add the AltStore / SideStore source
+          \`https://github.com/${GITHUB_REPOSITORY}/releases/download/altsource/apps.json\`
+          or download the IPA above."
+
+      - name: Update AltStore source
+        run: |
+          python3 scripts/make-altsource.py --repo "${GITHUB_REPOSITORY}" --out dist/apps.json
+          cat dist/apps.json
+          if ! gh release view altsource >/dev/null 2>&1; then
+            gh release create altsource --prerelease --title "AltStore / SideStore source" \
+              --notes "Add this source to AltStore, SideStore, Feather or any compatible installer:
+
+          \`https://github.com/${GITHUB_REPOSITORY}/releases/download/altsource/apps.json\`
+
+          This release is updated automatically by CI. Do not delete it."
+          fi
+          gh release upload altsource dist/apps.json assets/icon.png --clobber
