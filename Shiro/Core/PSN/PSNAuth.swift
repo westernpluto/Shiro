@@ -120,6 +120,25 @@ final class PSNAuth: ObservableObject {
         }
     }
 
+    /// Advanced / diagnostics: sign in with a refresh token obtained by another
+    /// client (e.g. chiaki-ng's settings), to compare how Sony treats it.
+    func signIn(refreshToken: String) async throws {
+        let rt = refreshToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tokens = try await requestToken(body: Self.tokenBody([
+            ("grant_type", "refresh_token"), ("refresh_token", rt),
+            ("scope", Self.scope), ("redirect_uri", Self.redirectURL)]))
+        let userId = try await fetchUserId(accessToken: tokens.access)
+        guard let uid = UInt64(userId) else { throw PSNError.decoding }
+        var le = uid.littleEndian
+        let creds = PSNCredentials(accessToken: tokens.access,
+                                   refreshToken: tokens.refresh.isEmpty ? rt : tokens.refresh,
+                                   expiry: Date().addingTimeInterval(TimeInterval(tokens.expiresIn)),
+                                   accountId: Data(bytes: &le, count: 8), userId: userId,
+                                   grantedScope: tokens.scope ?? Self.scope)
+        store(creds)
+        ShiroLog.shared.info("Signed in to PSN with an imported refresh token (granted scopes: \(tokens.scope ?? "not reported"))")
+    }
+
     func signOut() {
         store(nil)
     }

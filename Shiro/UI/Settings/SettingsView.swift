@@ -6,6 +6,8 @@ struct SettingsView: View {
     @EnvironmentObject private var store: ConsoleStore
     @EnvironmentObject private var display: DisplayManager
     @State private var showLogin = false
+    @State private var showImportToken = false
+    @State private var importToken = ""
 
     var body: some View {
         Form {
@@ -109,6 +111,12 @@ struct SettingsView: View {
             Section {
                 Toggle("Show statistics overlay", isOn: $settings.showStats)
                 Toggle("Verbose logging", isOn: $settings.verboseLogging)
+                Button {
+                    importToken = ""
+                    showImportToken = true
+                } label: {
+                    Label("Sign in with a PSN refresh token…", systemImage: "key")
+                }
                 if psn.isSignedIn {
                     Button {
                         Task {
@@ -150,6 +158,24 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .sheet(isPresented: $showLogin) { PSNLoginView() }
+        .alert("PSN refresh token", isPresented: $showImportToken) {
+            SecureField("Refresh token", text: $importToken)
+            Button("Sign in") {
+                let t = importToken
+                Task {
+                    do {
+                        try await psn.signIn(refreshToken: t)
+                        UserDefaults.standard.removeObject(forKey: "psn.pushBackoffUntil")
+                        await store.refreshPSNDevices()
+                    } catch {
+                        store.lastPSNError = error.localizedDescription
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Advanced: paste a refresh token from another Remote Play client (e.g. chiaki-ng › Settings › Config). It is stored only in this iPhone's Keychain.")
+        }
     }
 
     private var knownNames: [String] {
