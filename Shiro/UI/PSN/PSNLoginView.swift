@@ -76,10 +76,9 @@ struct PSNWebView: UIViewRepresentable {
         config.websiteDataStore = .nonPersistent()
         let web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = context.coordinator
-        // The OAuth client is Sony's Windows Remote Play app, and Sony's push
-        // service appears to treat tokens by the login environment, so sign in
-        // with a desktop browser identity like chiaki-ng's login does.
-        web.customUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+        // Use the web view's genuine iOS Safari identity. A faked desktop User-
+        // Agent makes Sony's sign-in page reject the login ("Something went
+        // wrong") because the claimed browser doesn't match the WebKit engine.
         web.load(URLRequest(url: PSNAuth.loginURL))
         return web
     }
